@@ -1,17 +1,13 @@
 #!/usr/bin/env node
 //
-// ⚠️ Synced from LINEFLEET_TRT docker/tiles/ (the dev/local twin) — keep the
-// pair in sync; the PRODUCTION rebuild runs HERE (.github/workflows/build.yml).
-// Twin-file references (apps/web/src/lib/map-style.ts) point at the main
-// LINEFLEET repo.
-//
 // vendor-liberty-style.mjs — vendor the OpenFreeMap "Liberty" style for OFFLINE
 // serving by the tileserver-gl sidecar (F6 / §0). MIT-licensed style
 // (github.com/hyperknot/openfreemap-styles).
 //
-// Run from the REPO ROOT (Node 18+; CI uses Node 22):
+// Run ONCE on a dev/build machine (Node 18+; project ships Node 24), from the
+// docker/tiles/ directory:
 //
-//   node ./scripts/vendor-liberty-style.mjs
+//   node ./vendor-liberty-style.mjs
 //
 // What it does:
 //   1. Fetches the RESOLVED Liberty style JSON from the live OpenFreeMap host
@@ -35,19 +31,31 @@
 //      silently breaks it. Benign occurrences of words like "openfreemap" in a
 //      name/metadata string do NOT trip it.
 //
-// Outputs (all git-ignored — regenerate at build time; see .gitignore):
+// Outputs (all git-ignored — regenerate at deploy time; see .gitignore):
 //   assets/styles/liberty.json
 //   assets/fonts/<fontstack>/<start>-<end>.pbf
 //   assets/sprites/liberty.{json,png} + liberty@2x.{json,png}
 //
-// NOTE: this makes network calls to OpenFreeMap (style + glyphs + sprites).
+// NOTE: this makes ONE-TIME network calls to OpenFreeMap. It was NOT run in the
+// authoring sandbox (egress blocked). Run it on a networked build machine.
 
 import { mkdir, writeFile, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ASSETS = join(HERE, "..", "assets"); // repo-root assets/ (script lives in scripts/)
+const ASSETS = join(HERE, "assets");
+
+// Morocco's outline WITH Western Sahara merged in (union of the MAR + ESH country
+// polygons, internal disputed border dissolved — see morocco-unified.geojson +
+// public/vendor/README provenance). Embedded INLINE into the style so both the
+// browser (MapLibre GL JS) and the server-side video renderer (maplibre-gl-native)
+// resolve it with no extra fetch. This is the country border we draw AFTER the
+// OSM admin_level-2 boundary layer (the "Western Sahara box") is removed.
+const MOROCCO_OUTLINE = JSON.parse(
+  readFileSync(join(HERE, "morocco-unified.geojson"), "utf8"),
+);
 
 const OFM_BASE = (process.env.OFM_BASE ?? "https://tiles.openfreemap.org").replace(/\/+$/, "");
 const STYLE_URL = process.env.STYLE_URL ?? `${OFM_BASE}/styles/liberty`;
@@ -176,10 +184,16 @@ function andClauses(filter, clauses) {
 const BOUNDARY_EXCLUSIONS_EXPR = [
   ["!=", ["get", "disputed"], 1],
   ["!", ["has", "claimed_by"]],
+  // No offshore boundary diagonals — parity with the web twin
+  // (apps/web/src/lib/map-style.ts). No-op here: base Liberty already excludes
+  // maritime in boundary_2/boundary_3, so andClauses dedupes it. Kept so the
+  // twins stay identical (the client requirement covers video + web alike).
+  ["!=", ["get", "maritime"], 1],
 ];
 const BOUNDARY_EXCLUSIONS_LEGACY = [
   ["!=", "disputed", 1],
   ["!has", "claimed_by"],
+  ["!=", "maritime", 1], // parity with the web twin (see expr note above)
 ];
 
 /** Lower-case needles; haystacks are downcased. Spanish keeps its accent —
@@ -228,14 +242,38 @@ function placeExclusionsLegacy() {
  * view — same contract as the web twin (never mutates its input; worst case
  * on a malformed style it returns an equivalent copy).
  */
+/** admin_level==2 selector, in both syntaxes — identifies the country-border layer. */
+function selectsAdminLevel2(filter) {
+  if (!Array.isArray(filter)) return false;
+  const s = JSON.stringify(filter);
+  return s.includes('["get","admin_level"],2]') || s.includes('"admin_level",2]');
+}
+
 function applyOfficialMoroccanView(style) {
   const patched = structuredClone(style);
   if (!Array.isArray(patched.layers)) return patched;
 
+  // Drop BOTH the disputed boundary layer(s) AND the admin_level-2 country-border
+  // layer (`boundary_2`). WHY level-2 too: the "Western Sahara box" (the stepped
+  // southern outline + the ~27.66°N separation) is an admin_level-2 line tagged
+  // IDENTICALLY to Morocco's real external borders (disputed=0, adm0=MAR/none), so
+  // it cannot be filtered out by attribute without also dropping legitimate
+  // borders. We therefore remove level-2 rendering entirely and REDRAW Morocco's
+  // border from the unified MAR+ESH outline (added below) — no internal WS line.
+  // The admin_level 3-6 layer (`boundary_3` = the 12 official regions) is KEPT.
   const removed = [];
+  let level2Layout = null;
+  let level2Paint = null;
   patched.layers = patched.layers.filter((layer) => {
     if (typeof layer !== "object" || layer === null) return true;
     if (!("source-layer" in layer) || layer["source-layer"] !== "boundary") return true;
+    const isLevel2 = layer.id === "boundary_2" || selectsAdminLevel2(layer.filter);
+    if (isLevel2) {
+      level2Layout = layer.layout ?? null;
+      level2Paint = layer.paint ?? null;
+      removed.push(layer.id);
+      return false;
+    }
     const drop = /disputed/i.test(layer.id) || containsDisputedSelector(layer.filter);
     if (drop) removed.push(layer.id);
     return !drop;
@@ -262,7 +300,30 @@ function applyOfficialMoroccanView(style) {
     }
   }
 
-  log(`official view: removed disputed layer(s): ${removed.length ? removed.join(", ") : "(none found)"}`);
+  // Redraw Morocco's country border from the unified outline (Sahara merged in,
+  // no internal WS line). Inline geojson source; styled to match the removed
+  // boundary_2 line so it reads as the national border. Inserted just below the
+  // first label layer so labels stay on top.
+  patched.sources = patched.sources ?? {};
+  patched.sources["ma-unified"] = { type: "geojson", data: MOROCCO_OUTLINE };
+  const outlineLayer = {
+    id: "ma-outline",
+    type: "line",
+    source: "ma-unified",
+    layout: level2Layout ?? { "line-cap": "round", "line-join": "round" },
+    paint: level2Paint ?? {
+      "line-color": "hsl(248,1%,41%)",
+      "line-opacity": ["interpolate", ["linear"], ["zoom"], 0, 0.4, 4, 1],
+      "line-width": ["interpolate", ["linear"], ["zoom"], 3, 1, 5, 1.2, 12, 3],
+    },
+  };
+  const firstLabelIdx = patched.layers.findIndex(
+    (l) => typeof l === "object" && l !== null && l.type === "symbol",
+  );
+  if (firstLabelIdx >= 0) patched.layers.splice(firstLabelIdx, 0, outlineLayer);
+  else patched.layers.push(outlineLayer);
+
+  log(`official view: removed layer(s): ${removed.length ? removed.join(", ") : "(none found)"}; added ma-outline (unified border)`);
   log(`official view: tightened ${boundaryCount} boundary layer(s), ${placeCount} place label layer(s)`);
   if (!removed.length) {
     // Liberty ships `boundary_disputed`; its absence means the upstream style
