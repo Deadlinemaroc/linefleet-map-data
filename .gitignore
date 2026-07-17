@@ -1,0 +1,9 @@
+# Regenerable build/vendor outputs — published as Release assets, never committed.
+build/
+assets/
+tiles-data/
+tiles-data-*.tar.gz
+tiles-data-*.tar.gz.sha256
+*.pmtiles
+*.osm.pbf
+.DS_Store

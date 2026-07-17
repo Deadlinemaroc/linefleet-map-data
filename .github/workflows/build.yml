@@ -1,0 +1,166 @@
+# Monthly Morocco basemap rebuild → GitHub Release.
+#
+# Fully TOKEN-LESS: the workflow's own GITHUB_TOKEN creates Releases in this
+# repo (permissions: contents: write below). No PAT, no secret, ever.
+#
+# Versioned-pair rule: the planetiler pin (PLANETILER_VERSION below) and the
+# vendored Liberty style are a PAIR — bump them together and verify with a
+# visual smoke test (see README.md). NEVER "latest".
+name: build-morocco-tiles
+
+on:
+  schedule:
+    # 1st of the month, 02:30 UTC.
+    # NOTE: GitHub auto-disables cron on public repos after 60 days without
+    # REPO activity (commits/issues) — the monthly Release does NOT count as
+    # activity. The keep-alive is apply-side: if the newest release is > 45
+    # days old, trigger this workflow manually (workflow_dispatch). See README.
+    - cron: "30 2 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the Release in this repo with the built-in GITHUB_TOKEN
+
+concurrency:
+  group: tiles-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      # PINNED — never latest. The OpenMapTiles schema it emits must keep
+      # matching the vendored Liberty style (versioned-pair rule, README.md).
+      PLANETILER_VERSION: v0.10.2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set WORK_DIR (space-free scratch dir)
+        # MUST be space-free: planetiler parses --output as a java.net.URI and
+        # crashes on spaces (the build script dies early if this regresses).
+        # The `runner` context is unavailable in job-level env, hence this step.
+        run: echo "WORK_DIR=$RUNNER_TEMP/tiles-build" >> "$GITHUB_ENV"
+
+      - name: Set up Java 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build morocco.pmtiles (planetiler, pinned)
+        run: ./scripts/build-morocco-pmtiles.sh
+
+      - name: Vendor Liberty style (official Moroccan view + offline guard)
+        run: node ./scripts/vendor-liberty-style.mjs
+
+      - name: Sanity gates (block publishing on a broken build)
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::SANITY GATE FAILED — $1"; exit 1; }
+
+          PMTILES="$WORK_DIR/morocco.pmtiles"
+          STYLE="assets/styles/liberty.json"
+          [ -f "$PMTILES" ] || fail "missing $PMTILES"
+          [ -f "$STYLE" ] || fail "missing $STYLE"
+
+          # 1. pmtiles size within 150–900 MB (tiny/huge output = broken build).
+          SIZE=$(stat -c%s "$PMTILES")
+          MIN=$((150 * 1024 * 1024))
+          MAX=$((900 * 1024 * 1024))
+          echo "pmtiles size: $SIZE bytes (~$((SIZE / 1024 / 1024)) MB)"
+          [ "$SIZE" -ge "$MIN" ] || fail "pmtiles < 150 MB — the build likely broke"
+          [ "$SIZE" -le "$MAX" ] || fail "pmtiles > 900 MB — the build likely broke"
+
+          # 2. Offline guarantee: no http(s):// remnant in the vendored style.
+          if grep -Eq 'https?://' "$STYLE"; then
+            fail "vendored style contains an http(s):// remnant — offline guarantee broken"
+          fi
+
+          # 3. Official Moroccan view: the disputed-boundary layer must be gone.
+          if grep -q 'boundary_disputed' "$STYLE"; then
+            fail "boundary_disputed present in the style — official-view patch regressed"
+          fi
+
+          # 4+5. Regression pins for the two staging bugs: sprite/glyphs must be
+          # paths-RELATIVE (a doubled segment 500'd every static render).
+          [ "$(jq -r '.sprite' "$STYLE")" = "liberty" ] \
+            || fail "style sprite != \"liberty\" — paths-relative regression (500s every render)"
+          [ "$(jq -r '.glyphs' "$STYLE")" = "{fontstack}/{range}.pbf" ] \
+            || fail "style glyphs != \"{fontstack}/{range}.pbf\" — paths-relative regression (500s every render)"
+
+          echo "All sanity gates PASSED."
+
+      - name: Pick BUILD_ID (YYYYMMDD, letter-suffixed on tag collision)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BASE="$(date -u +%Y%m%d)"
+          BUILD_ID=""
+          for cand in "$BASE" "${BASE}b" "${BASE}c" "${BASE}d" "${BASE}e" "${BASE}f"; do
+            if ! gh release view "tiles-$cand" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              BUILD_ID="$cand"
+              break
+            fi
+          done
+          [ -n "$BUILD_ID" ] || { echo "::error::no free tiles-* tag left for $BASE"; exit 1; }
+          echo "BUILD_ID=$BUILD_ID" >> "$GITHUB_ENV"
+          echo "BUILD_ID=$BUILD_ID"
+
+      - name: Assemble bundle, tarball, sha256
+        run: |
+          set -euo pipefail
+          # Layout contract (see README + main repo docker/tiles/README.md):
+          # ONE top-level dir, stripped on extraction by the apply side.
+          rm -rf tiles-data
+          mkdir -p tiles-data/data
+          cp config.json                   tiles-data/config.json
+          cp "$WORK_DIR/morocco.pmtiles"   tiles-data/data/morocco.pmtiles
+          cp -r assets/styles              tiles-data/styles
+          cp -r assets/fonts               tiles-data/fonts
+          cp -r assets/sprites             tiles-data/sprites
+          tar -czf "tiles-data-$BUILD_ID.tar.gz" tiles-data
+          sha256sum "tiles-data-$BUILD_ID.tar.gz" > "tiles-data-$BUILD_ID.tar.gz.sha256"
+          cat "tiles-data-$BUILD_ID.tar.gz.sha256"
+
+      - name: Publish Release (tarball + sha256 asset)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SHA="$(cut -d' ' -f1 "tiles-data-$BUILD_ID.tar.gz.sha256")"
+          OSM_DATE="$(date -u +%Y-%m-%d)"
+          NOTES="Automated monthly rebuild. planetiler $PLANETILER_VERSION · Geofabrik morocco-latest (fetched $OSM_DATE) · official Moroccan view · sha256 $SHA"
+          NOTES="$NOTES"$'\n\n'"© OpenMapTiles © OpenStreetMap contributors (ODbL)"
+          gh release create "tiles-$BUILD_ID" \
+            "tiles-data-$BUILD_ID.tar.gz" \
+            "tiles-data-$BUILD_ID.tar.gz.sha256" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Morocco tiles $BUILD_ID" \
+            --notes "$NOTES"
+
+      - name: Job summary
+        run: |
+          set -euo pipefail
+          SHA="$(cut -d' ' -f1 "tiles-data-$BUILD_ID.tar.gz.sha256")"
+          PM_MB=$(( $(stat -c%s "$WORK_DIR/morocco.pmtiles") / 1024 / 1024 ))
+          TAR_MB=$(( $(stat -c%s "tiles-data-$BUILD_ID.tar.gz") / 1024 / 1024 ))
+          {
+            echo "## Morocco tiles build \`$BUILD_ID\`"
+            echo ""
+            echo "| item | value |"
+            echo "| --- | --- |"
+            echo "| release | \`tiles-$BUILD_ID\` |"
+            echo "| pmtiles | ~${PM_MB} MB |"
+            echo "| tarball | ~${TAR_MB} MB |"
+            echo "| sha256 | \`$SHA\` |"
+            echo ""
+            echo "Apply on the VPS: set \`TILES_BUNDLE_URL\`, \`TILES_BUNDLE_SHA256\`, \`TILES_BUILD_ID\` and redeploy (main repo \`docker/tiles/README.md\`, Step 4)."
+          } >> "$GITHUB_STEP_SUMMARY"
