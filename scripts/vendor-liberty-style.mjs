@@ -47,14 +47,18 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ASSETS = join(HERE, "assets");
 
-// Morocco's outline WITH Western Sahara merged in (union of the MAR + ESH country
-// polygons, internal disputed border dissolved — see morocco-unified.geojson +
-// public/vendor/README provenance). Embedded INLINE into the style so both the
-// browser (MapLibre GL JS) and the server-side video renderer (maplibre-gl-native)
-// resolve it with no extra fetch. This is the country border we draw AFTER the
-// OSM admin_level-2 boundary layer (the "Western Sahara box") is removed.
-const MOROCCO_OUTLINE = JSON.parse(
-  readFileSync(join(HERE, "morocco-unified.geojson"), "utf8"),
+// Morocco's international LAND frontier (Algeria east + desert/Mauritania south),
+// Western Sahara merged in and the internal disputed line dissolved — derived from
+// morocco-unified.geojson (union of MAR + ESH) by KEEPING ONLY the land border and
+// DROPPING the Atlantic + Mediterranean coast. WHY land-only: the full unified
+// polygon's coarse western edge drew straight chords across the sea (the "diagonal
+// offshore line"); a land-border LineString has no coastal segment. Embedded INLINE
+// so both the browser (MapLibre GL JS) and the server-side video renderer
+// (maplibre-gl-native) resolve it with no extra fetch. Drawn AFTER the OSM
+// admin_level-2 boundary layer (the "Western Sahara box") is removed.
+// ⚠️ TWIN of apps/web/src/lib/morocco-land-border.ts (browser runtime copy).
+const MOROCCO_LAND_BORDER = JSON.parse(
+  readFileSync(join(HERE, "morocco-land-border.geojson"), "utf8"),
 );
 
 const OFM_BASE = (process.env.OFM_BASE ?? "https://tiles.openfreemap.org").replace(/\/+$/, "");
@@ -300,12 +304,12 @@ function applyOfficialMoroccanView(style) {
     }
   }
 
-  // Redraw Morocco's country border from the unified outline (Sahara merged in,
-  // no internal WS line). Inline geojson source; styled to match the removed
-  // boundary_2 line so it reads as the national border. Inserted just below the
-  // first label layer so labels stay on top.
+  // Redraw Morocco's country border from the unified LAND frontier (Sahara merged
+  // in, no internal WS line, NO coast — so no offshore chords). Inline geojson
+  // source; styled to match the removed boundary_2 line so it reads as the national
+  // border. Inserted just below the first label layer so labels stay on top.
   patched.sources = patched.sources ?? {};
-  patched.sources["ma-unified"] = { type: "geojson", data: MOROCCO_OUTLINE };
+  patched.sources["ma-unified"] = { type: "geojson", data: MOROCCO_LAND_BORDER };
   const outlineLayer = {
     id: "ma-outline",
     type: "line",

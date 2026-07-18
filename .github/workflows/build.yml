@@ -60,6 +60,9 @@ jobs:
       - name: Vendor Liberty style (official Moroccan view + offline guard)
         run: node ./scripts/vendor-liberty-style.mjs
 
+      - name: Vendor Liberty DARK style (Mode sombre — same official-view scrub)
+        run: node ./scripts/vendor-liberty-dark.mjs
+
       - name: Sanity gates (block publishing on a broken build)
         run: |
           set -euo pipefail
@@ -94,6 +97,29 @@ jobs:
             || fail "style sprite != \"liberty\" — paths-relative regression (500s every render)"
           [ "$(jq -r '.glyphs' "$STYLE")" = "{fontstack}/{range}.pbf" ] \
             || fail "style glyphs != \"{fontstack}/{range}.pbf\" — paths-relative regression (500s every render)"
+
+          # 5b. Offshore-diagonal pin: the unified border must be the LAND
+          # frontier LineString (a full polygon's coastal chords cut across the
+          # sea — the bug fixed 2026-07-18). Applies to BOTH styles.
+          [ "$(jq -r '.sources["ma-unified"].data.features[0].geometry.type' "$STYLE")" = "LineString" ] \
+            || fail "light ma-unified is not a LineString — offshore-diagonal regression"
+          grep -q 'ma-outline' "$STYLE" || fail "ma-outline missing from the light style"
+
+          # 6. Dark style (Mode sombre): present, offline, official-view, flat path.
+          DARK="assets/styles/liberty-dark.json"
+          [ -f "$DARK" ] || fail "missing $DARK — dark vendor step broke"
+          if grep -Eq 'https?://' "$DARK"; then
+            fail "dark style contains an http(s):// remnant — offline guarantee broken"
+          fi
+          if grep -q 'boundary_disputed' "$DARK"; then
+            fail "boundary_disputed present in the dark style — official-view patch regressed"
+          fi
+          grep -q 'ma-outline' "$DARK" || fail "ma-outline missing from the dark style — land-border regressed"
+          [ "$(jq -r '.sprite' "$DARK")" = "liberty" ] \
+            || fail "dark sprite != \"liberty\" — paths-relative regression"
+          [ "$(jq -r '.name' "$DARK")" = "liberty-dark" ] || fail "dark style name != liberty-dark"
+          [ "$(jq -r '.sources["ma-unified"].data.features[0].geometry.type' "$DARK")" = "LineString" ] \
+            || fail "dark ma-unified is not a LineString — offshore-diagonal regression"
 
           echo "All sanity gates PASSED."
 

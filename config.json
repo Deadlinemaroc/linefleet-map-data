@@ -1,5 +1,4 @@
 {
-  "_comment": "Synced from LINEFLEET_TRT docker/tiles/ (the dev/local twin) — keep the pair in sync; the PRODUCTION rebuild runs HERE. tileserver-gl only reads options/styles/data, so this key is ignored at serve time.",
   "options": {
     "paths": {
       "root": "/data",
@@ -19,6 +18,11 @@
       "style": "liberty.json",
       "serve_rendered": true,
       "serve_data": true
+    },
+    "liberty-dark": {
+      "style": "liberty-dark.json",
+      "serve_rendered": false,
+      "serve_data": false
     }
   },
   "data": {
