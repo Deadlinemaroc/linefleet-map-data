@@ -19,12 +19,10 @@
 //        - sprite   -> "liberty" (paths-relative)
 //      and DROPS the remote raster source "ne2_shaded" (Natural Earth hillshade,
 //      not part of our pmtiles) plus any layers that use it.
-//   4. Applies `applyOfficialMoroccanView(style)` — the vendored-style TWIN of
-//      the web runtime patch (apps/web/src/lib/map-style.ts). Binding client
-//      requirement: the official Moroccan map (no disputed separation line/berm,
-//      no Western Sahara label) in the EXPORTED VIDEOS too. The pmtiles DATA
-//      contains the disputed features; the STYLE filters them — see the block
-//      comment on the function for the twin-evolution rule.
+//   4. Applies the Linefleet map display policy from map-display-policy.mjs.
+//      Suppresses country/disputed boundary layers, old custom outlines and
+//      selected place labels. Roads, cities and regional layers remain.
+//      This display choice does not assert authoritative boundary geometry.
 //   5. FAILS LOUDLY if any URL-LIKE remnant survives (http(s)://, a
 //      protocol-relative "//host" string value, or the __TILEJSON_DOMAIN__
 //      placeholder) — that is the offline guarantee: one leftover remote URL
@@ -40,26 +38,12 @@
 // authoring sandbox (egress blocked). Run it on a networked build machine.
 
 import { mkdir, writeFile, rm } from "node:fs/promises";
-import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { applyLinefleetMapDisplay } from "./map-display-policy.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ASSETS = join(HERE, "assets");
-
-// Morocco's international LAND frontier (Algeria east + desert/Mauritania south),
-// Western Sahara merged in and the internal disputed line dissolved — derived from
-// morocco-unified.geojson (union of MAR + ESH) by KEEPING ONLY the land border and
-// DROPPING the Atlantic + Mediterranean coast. WHY land-only: the full unified
-// polygon's coarse western edge drew straight chords across the sea (the "diagonal
-// offshore line"); a land-border LineString has no coastal segment. Embedded INLINE
-// so both the browser (MapLibre GL JS) and the server-side video renderer
-// (maplibre-gl-native) resolve it with no extra fetch. Drawn AFTER the OSM
-// admin_level-2 boundary layer (the "Western Sahara box") is removed.
-// ⚠️ TWIN of apps/web/src/lib/morocco-land-border.ts (browser runtime copy).
-const MOROCCO_LAND_BORDER = JSON.parse(
-  readFileSync(join(HERE, "morocco-land-border.geojson"), "utf8"),
-);
+const ASSETS = join(HERE, "..", "assets");
 
 const OFM_BASE = (process.env.OFM_BASE ?? "https://tiles.openfreemap.org").replace(/\/+$/, "");
 const STYLE_URL = process.env.STYLE_URL ?? `${OFM_BASE}/styles/liberty`;
@@ -118,229 +102,6 @@ async function writeFileEnsured(path, data) {
 }
 
 // ---------------------------------------------------------------------------
-// « Carte officielle du Maroc » — vendored-style twin of the web runtime patch.
-//
-// ⚠️ TWIN FILE: apps/web/src/lib/map-style.ts (`applyOfficialMoroccanView`) is
-// the REFERENCE implementation — its header documents the empirically-observed
-// layer/property reality (style JSON + decoded planet tiles z1–z6 around
-// 27.66°N). The web patches the live style at RUNTIME; this patches the
-// VENDORED style the tileserver-gl video sidecar renders. The client
-// requirement covers BOTH surfaces, so the two implementations MUST evolve
-// together: any change there (new selectors, name variants, layer families)
-// must be mirrored here, and vice-versa.
-//
-// Same transformations as the web twin:
-//   (a) remove every layer that renders disputed boundaries on source-layer
-//       "boundary" (id contains "disputed" or filter selects disputed==1 —
-//       Liberty's dashed `boundary_disputed` layer);
-//   (b) tighten every remaining `boundary` layer with disputed != 1 AND
-//       !has claimed_by (Liberty's boundary_2/boundary_3 already carry these —
-//       the AND is deduplicated, so it is a no-op there and insurance against
-//       a future style reshuffle leaking the line back);
-//   (c) exclude any Western Sahara label from every `place` layer — by
-//       iso_a2=="EH" AND by name variants (case/diacritic-tolerant, incl. the
-//       no-space Arabic form) across every name/name:* property the style's
-//       text-fields read. Current builds carry NO WS label (the territory is
-//       labeled with the official Moroccan regions) — this filter is DEFENSIVE
-//       against a future tile/style build reintroducing it.
-// Both expression and legacy filter syntaxes are handled, matching the twin
-// (Liberty is expression; legacy keeps the patch correct if STYLE_URL is ever
-// pointed at an older legacy-filter style).
-
-/** disputed==1 selector, in both syntaxes — identifies dedicated disputed layers. */
-const DISPUTED_SELECTORS = new Set([
-  JSON.stringify(["==", ["get", "disputed"], 1]),
-  JSON.stringify(["==", "disputed", 1]),
-]);
-
-function containsDisputedSelector(filter) {
-  if (!Array.isArray(filter)) return false;
-  if (DISPUTED_SELECTORS.has(JSON.stringify(filter))) return true;
-  return filter.some(containsDisputedSelector);
-}
-
-/** Expression filters reference properties via ["get", key] — legacy never does. */
-function isExpressionFilter(filter) {
-  if (!Array.isArray(filter)) return true; // absent filter → emit modern syntax
-  if (filter[0] === "get") return true;
-  return filter.some((part) => Array.isArray(part) && isExpressionFilter(part));
-}
-
-/** AND extra clauses into an existing filter, deduplicated, preserving shape. */
-function andClauses(filter, clauses) {
-  const existing =
-    Array.isArray(filter) && filter[0] === "all"
-      ? filter.slice(1)
-      : filter === undefined
-        ? []
-        : [filter];
-  const seen = new Set(existing.map((c) => JSON.stringify(c)));
-  const merged = [...existing];
-  for (const clause of clauses) {
-    const key = JSON.stringify(clause);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    merged.push(clause);
-  }
-  return ["all", ...merged];
-}
-
-const BOUNDARY_EXCLUSIONS_EXPR = [
-  ["!=", ["get", "disputed"], 1],
-  ["!", ["has", "claimed_by"]],
-  // No offshore boundary diagonals — parity with the web twin
-  // (apps/web/src/lib/map-style.ts). No-op here: base Liberty already excludes
-  // maritime in boundary_2/boundary_3, so andClauses dedupes it. Kept so the
-  // twins stay identical (the client requirement covers video + web alike).
-  ["!=", ["get", "maritime"], 1],
-];
-const BOUNDARY_EXCLUSIONS_LEGACY = [
-  ["!=", "disputed", 1],
-  ["!has", "claimed_by"],
-  ["!=", "maritime", 1], // parity with the web twin (see expr note above)
-];
-
-/** Lower-case needles; haystacks are downcased. Spanish keeps its accent —
- *  `downcase` does not fold diacritics, so both forms are listed. */
-const WS_NEEDLES = [
-  "western sahara",
-  "sahara occidental",
-  "sáhara occidental",
-  "الصحراء الغربية",
-  "الصحراءالغربية",
-];
-
-/** Every name property the style's text-fields read, plus common fallbacks. */
-const WS_NAME_PROPS = [
-  "name",
-  "name_en",
-  "name_int",
-  "name:latin",
-  "name:nonlatin",
-  "name:fr",
-  "name:es",
-  "name:ar",
-];
-
-function placeExclusionsExpr() {
-  const clauses = [["!=", ["get", "iso_a2"], "EH"]];
-  for (const prop of WS_NAME_PROPS) {
-    for (const needle of WS_NEEDLES) {
-      // substring test, case-tolerant, safe when the property is absent
-      clauses.push(["!", ["in", needle, ["downcase", ["coalesce", ["get", prop], ""]]]]);
-    }
-  }
-  return clauses;
-}
-
-/** Legacy filters cannot do substrings — exact-match exclusion on the variants. */
-function placeExclusionsLegacy() {
-  const variants = ["Western Sahara", "Sahara Occidental", "Sáhara Occidental", "الصحراء الغربية"];
-  const clauses = [["!=", "iso_a2", "EH"]];
-  for (const prop of WS_NAME_PROPS) clauses.push(["!in", prop, ...variants]);
-  return clauses;
-}
-
-/**
- * Returns a patched COPY of a MapLibre style enforcing the official Moroccan
- * view — same contract as the web twin (never mutates its input; worst case
- * on a malformed style it returns an equivalent copy).
- */
-/** admin_level==2 selector, in both syntaxes — identifies the country-border layer. */
-function selectsAdminLevel2(filter) {
-  if (!Array.isArray(filter)) return false;
-  const s = JSON.stringify(filter);
-  return s.includes('["get","admin_level"],2]') || s.includes('"admin_level",2]');
-}
-
-function applyOfficialMoroccanView(style) {
-  const patched = structuredClone(style);
-  if (!Array.isArray(patched.layers)) return patched;
-
-  // Drop BOTH the disputed boundary layer(s) AND the admin_level-2 country-border
-  // layer (`boundary_2`). WHY level-2 too: the "Western Sahara box" (the stepped
-  // southern outline + the ~27.66°N separation) is an admin_level-2 line tagged
-  // IDENTICALLY to Morocco's real external borders (disputed=0, adm0=MAR/none), so
-  // it cannot be filtered out by attribute without also dropping legitimate
-  // borders. We therefore remove level-2 rendering entirely and REDRAW Morocco's
-  // border from the unified MAR+ESH outline (added below) — no internal WS line.
-  // The admin_level 3-6 layer (`boundary_3` = the 12 official regions) is KEPT.
-  const removed = [];
-  let level2Layout = null;
-  let level2Paint = null;
-  patched.layers = patched.layers.filter((layer) => {
-    if (typeof layer !== "object" || layer === null) return true;
-    if (!("source-layer" in layer) || layer["source-layer"] !== "boundary") return true;
-    const isLevel2 = layer.id === "boundary_2" || selectsAdminLevel2(layer.filter);
-    if (isLevel2) {
-      level2Layout = layer.layout ?? null;
-      level2Paint = layer.paint ?? null;
-      removed.push(layer.id);
-      return false;
-    }
-    const drop = /disputed/i.test(layer.id) || containsDisputedSelector(layer.filter);
-    if (drop) removed.push(layer.id);
-    return !drop;
-  });
-
-  let boundaryCount = 0;
-  let placeCount = 0;
-  for (const layer of patched.layers) {
-    if (typeof layer !== "object" || layer === null || !("source-layer" in layer)) continue;
-    if (layer["source-layer"] === "boundary") {
-      const expr = isExpressionFilter(layer.filter);
-      layer.filter = andClauses(
-        layer.filter,
-        expr ? BOUNDARY_EXCLUSIONS_EXPR : BOUNDARY_EXCLUSIONS_LEGACY,
-      );
-      boundaryCount++;
-    } else if (layer["source-layer"] === "place") {
-      const expr = isExpressionFilter(layer.filter);
-      layer.filter = andClauses(
-        layer.filter,
-        expr ? placeExclusionsExpr() : placeExclusionsLegacy(),
-      );
-      placeCount++;
-    }
-  }
-
-  // Redraw Morocco's country border from the unified LAND frontier (Sahara merged
-  // in, no internal WS line, NO coast — so no offshore chords). Inline geojson
-  // source; styled to match the removed boundary_2 line so it reads as the national
-  // border. Inserted just below the first label layer so labels stay on top.
-  patched.sources = patched.sources ?? {};
-  patched.sources["ma-unified"] = { type: "geojson", data: MOROCCO_LAND_BORDER };
-  const outlineLayer = {
-    id: "ma-outline",
-    type: "line",
-    source: "ma-unified",
-    layout: level2Layout ?? { "line-cap": "round", "line-join": "round" },
-    paint: level2Paint ?? {
-      "line-color": "hsl(248,1%,41%)",
-      "line-opacity": ["interpolate", ["linear"], ["zoom"], 0, 0.4, 4, 1],
-      "line-width": ["interpolate", ["linear"], ["zoom"], 3, 1, 5, 1.2, 12, 3],
-    },
-  };
-  const firstLabelIdx = patched.layers.findIndex(
-    (l) => typeof l === "object" && l !== null && l.type === "symbol",
-  );
-  if (firstLabelIdx >= 0) patched.layers.splice(firstLabelIdx, 0, outlineLayer);
-  else patched.layers.push(outlineLayer);
-
-  log(`official view: removed layer(s): ${removed.length ? removed.join(", ") : "(none found)"}; added ma-outline (unified border)`);
-  log(`official view: tightened ${boundaryCount} boundary layer(s), ${placeCount} place label layer(s)`);
-  if (!removed.length) {
-    // Liberty ships `boundary_disputed`; its absence means the upstream style
-    // changed shape — the tightened filters still hold the line out, but the
-    // twin (map-style.ts) must be re-verified against the new style.
-    console.warn(
-      "WARN: no dedicated disputed layer found — upstream style changed? Re-verify the web twin (apps/web/src/lib/map-style.ts).",
-    );
-  }
-  return patched;
-}
-
-// ---------------------------------------------------------------------------
 async function main() {
   await rm(ASSETS, { recursive: true, force: true });
   await mkdir(ASSETS, { recursive: true });
@@ -386,14 +147,13 @@ async function main() {
   style.glyphs = LOCAL_GLYPHS;
   style.sprite = LOCAL_SPRITE;
 
-  // 3. « Carte officielle du Maroc » — official-view patch (twin of the web
-  // runtime patch, see the block comment above applyOfficialMoroccanView).
-  log("applying the official Moroccan view (twin of apps/web/src/lib/map-style.ts)");
-  const official = applyOfficialMoroccanView(style);
+  // 3. Apply the same display choice as the web/mobile runtime guard.
+  log("applying the Linefleet map display policy (no custom national outline)");
+  const displayed = applyLinefleetMapDisplay(style);
 
   // 4. Collect the font stacks actually referenced by the surviving layers.
   const fontstacks = new Set();
-  for (const layer of official.layers) {
+  for (const layer of displayed.layers) {
     const tf = layer.layout && layer.layout["text-font"];
     if (Array.isArray(tf)) for (const f of tf) if (typeof f === "string") fontstacks.add(f);
   }
@@ -441,8 +201,8 @@ async function main() {
   if (spriteCount < 2) die(`sprite download incomplete (${spriteCount} files) — expected at least liberty.json + liberty.png`);
   log(`sprite files: ${spriteCount}`);
 
-  // 7. Write the rewritten, official-view-patched style.
-  const styleJson = JSON.stringify(official, null, 2);
+  // 7. Write the rewritten, display-policy-patched style.
+  const styleJson = JSON.stringify(displayed, null, 2);
   await writeFileEnsured(join(ASSETS, "styles", "liberty.json"), styleJson);
 
   // 8. OFFLINE GUARANTEE: no URL-LIKE remnant may remain anywhere in the style.

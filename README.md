@@ -26,13 +26,17 @@ What it does:
    freshness mechanism). Western Sahara is included (the Geofabrik Morocco
    extract already reaches ~20.88°N).
 2. **Vendor** the OpenFreeMap Liberty style + glyphs + sprites, apply the
-   « carte officielle du Maroc » patch (twin of the main repo's
-   `apps/web/src/lib/map-style.ts`), rewrite all URLs paths-relative, and run
+   Linefleet map display policy (`scripts/map-display-policy.mjs`), rewrite
+   all URLs paths-relative, and run
    the offline guard (any leftover remote URL fails the build).
 3. **Sanity gates** before anything is published:
    - pmtiles size within **150–900 MB** (tiny/huge = something broke);
    - **no `http(s)://` remnant** in the vendored style (offline guarantee);
-   - **`boundary_disputed` absent** from the style (official-view patch held);
+   - **`boundary_disputed` and `boundary_2` absent** from both styles;
+   - **no `ma-outline` layer or `ma-unified` source**: the unverified custom
+     national outline is omitted, rather than drawing an inaccurate border;
+   - **`boundary_3` regional boundaries retained**, with Western Sahara label
+     exclusions preserved on every place layer;
    - **`sprite == "liberty"`** and **`glyphs == "{fontstack}/{range}.pbf"`**
      (paths-RELATIVE — regression pins for the two 2026-07-17 staging bugs
      where a doubled path segment 500'd every static render).
@@ -84,7 +88,8 @@ where `config.json` expects it under `/data`:
 tiles-data/
   config.json                       # tileserver-gl config (repo root, committed)
   data/morocco.pmtiles              # Planetiler output
-  styles/liberty.json               # vendored + official-view patched
+  styles/liberty.json               # vendored + display policy applied
+  styles/liberty-dark.json          # same data and display policy, dark palette
   fonts/<fontstack>/<range>.pbf     # vendored glyphs (Latin + Arabic)
   sprites/liberty.{json,png} + @2x  # vendored sprites
 ```
@@ -108,6 +113,21 @@ Same scripts, run from the repo root (Java 21+, Node 18+):
 ```bash
 WORK_DIR=/tmp/linefleet-tiles ./scripts/build-morocco-pmtiles.sh   # space-free WORK_DIR!
 node ./scripts/vendor-liberty-style.mjs
+node ./scripts/vendor-liberty-dark.mjs
 ```
 
 Outputs land in `$WORK_DIR/morocco.pmtiles` and `assets/` (both git-ignored).
+
+## Style-only correction
+
+For an existing extracted bundle, the policy can be applied without rebuilding
+PMTiles, fonts, or sprites:
+
+```bash
+node scripts/patch-map-style.mjs tiles-data/styles/liberty.json tiles-data/styles/liberty.json
+node scripts/patch-map-style.mjs tiles-data/styles/liberty-dark.json tiles-data/styles/liberty-dark.json
+```
+
+The patch only changes map styling and preserves source, glyph, and sprite URLs.
+Repackage with a new build ID and checksum, verify both styles, then apply through
+the normal release process. Keep the original bundle for rollback.
