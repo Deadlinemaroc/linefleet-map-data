@@ -66,3 +66,14 @@ test("reveals useful places earlier with bilingual fallback and normal collision
   assert.equal(patched.layers[0].layout["text-allow-overlap"], false);
   assert.deepEqual(applyLinefleetMapDisplay(patched), patched);
 });
+
+
+test("a missing upstream sprite gets a bundled fallback without hiding place names", () => {
+  const icon = ["get", "class"];
+  const source = base([{ id: "poi_r1", type: "symbol", "source-layer": "poi", layout: { "icon-image": icon, "text-field": ["get", "name"] } }]);
+  const patched = applyLinefleetMapDisplay(source);
+  assert.deepEqual(patched.layers[0].layout["icon-image"], ["coalesce", ["image", icon], ["image", "circle_11"]]);
+  assert.equal(patched.layers[0].layout["icon-optional"], true);
+  assert.deepEqual(applyLinefleetMapDisplay(patched), patched);
+  assert.deepEqual(source.layers[0].layout["icon-image"], icon);
+});

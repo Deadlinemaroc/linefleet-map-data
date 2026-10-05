@@ -157,6 +157,14 @@ export function applyLinefleetMapDisplay(style) {
       const zoom = POI_ZOOMS[layer.id];
       if (zoom !== undefined) layer.minzoom = Math.min(layer.minzoom ?? zoom, zoom);
     }
+    // The schema has POI classes without a Liberty sprite (office, ATM, gates).
+    // A missing icon must not suppress a useful name. Resolve the known sprite
+    // first, otherwise use the small bundled generic dot; preserve collisions.
+    const icon = layer.layout?.["icon-image"];
+    if (layer.id.startsWith("poi_") && icon && !(Array.isArray(icon) && icon[0] === "coalesce" && Array.isArray(icon[1]) && icon[1][0] === "image")) {
+      layer.layout["icon-image"] = ["coalesce", ["image", icon], ["image", "circle_11"]];
+      layer.layout["icon-optional"] = true;
+    }
     if (layer["source-layer"] === "boundary") {
       layer.filter = andClauses(
         layer.filter,
