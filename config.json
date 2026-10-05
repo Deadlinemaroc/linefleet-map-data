@@ -36,6 +36,9 @@
   "data": {
     "morocco": {
       "pmtiles": "morocco.pmtiles"
+    },
+    "places": {
+      "mbtiles": "places.mbtiles"
     }
   }
 }

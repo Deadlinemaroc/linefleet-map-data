@@ -40,10 +40,11 @@
 import { mkdir, writeFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { withPlaceOverlay } from "./place-overlay.mjs";
 import { applyLinefleetMapDisplay } from "./map-display-policy.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ASSETS = join(HERE, "..", "assets");
+const ASSETS = join(HERE, "assets");
 
 const OFM_BASE = (process.env.OFM_BASE ?? "https://tiles.openfreemap.org").replace(/\/+$/, "");
 const STYLE_URL = process.env.STYLE_URL ?? `${OFM_BASE}/styles/liberty`;
@@ -149,7 +150,7 @@ async function main() {
 
   // 3. Apply the same display choice as the web/mobile runtime guard.
   log("applying the Linefleet map display policy (no custom national outline)");
-  const displayed = applyLinefleetMapDisplay(style);
+  const displayed = applyLinefleetMapDisplay(process.env.OVERTURE_PLACES === "1" ? withPlaceOverlay(style) : style);
 
   // 4. Collect the font stacks actually referenced by the surviving layers.
   const fontstacks = new Set();

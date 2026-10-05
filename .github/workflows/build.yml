@@ -33,6 +33,7 @@ jobs:
       # PINNED — never latest. The OpenMapTiles schema it emits must keep
       # matching the vendored Liberty style (versioned-pair rule, README.md).
       PLANETILER_VERSION: v0.10.2
+      OVERTURE_PLACES: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -55,13 +56,24 @@ jobs:
           node-version: "22"
 
       - name: Test map display policy
-        run: node --test scripts/map-display-policy.test.mjs
+        run: node --test scripts/map-display-policy.test.mjs scripts/place-overlay.test.mjs
 
       - name: Build morocco.pmtiles (planetiler, pinned)
         run: ./scripts/build-morocco-pmtiles.sh
 
       - name: Verify extract timestamp
         run: node scripts/read-map-metadata.mjs "$WORK_DIR/morocco.pmtiles" > map-data.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build filtered regional Overture places (separate licensed layer)
+        run: |
+          pip install -r scripts/places-requirements.txt
+          python scripts/build-places.test.py
+          python scripts/build-places.py --work-dir "$WORK_DIR"
 
       - name: Vendor Liberty style (official Moroccan view + offline guard)
         run: node ./scripts/vendor-liberty-style.mjs
@@ -171,6 +183,10 @@ jobs:
           cp config.json                   tiles-data/config.json
           cp map-data.json                  tiles-data/map-data.json
           cp "$WORK_DIR/morocco.pmtiles"   tiles-data/data/morocco.pmtiles
+          cp "$WORK_DIR/places.mbtiles"    tiles-data/data/places.mbtiles
+          cp "$WORK_DIR/places-metadata.json" tiles-data/places-metadata.json
+          cp "$WORK_DIR/places-provenance.json" tiles-data/places-provenance.json
+          cp "$WORK_DIR/places-CDLA-Permissive-2.0.html" tiles-data/places-CDLA-Permissive-2.0.html
           cp -r assets/styles              tiles-data/styles
           cp -r assets/fonts               tiles-data/fonts
           cp -r assets/sprites             tiles-data/sprites
@@ -191,6 +207,7 @@ jobs:
             "tiles-data-$BUILD_ID.tar.gz" \
             "tiles-data-$BUILD_ID.tar.gz.sha256" \
             "map-data.json" \
+            "$WORK_DIR/places-metadata.json" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Morocco tiles $BUILD_ID" \
             --notes "$NOTES"
