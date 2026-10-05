@@ -42,7 +42,7 @@ test("retains road/city data while applying place-label exclusions in both filte
   const legacy = { ...city, id: "legacy-cities", filter: ["==", "class", "city"] };
   const patched = applyLinefleetMapDisplay(base([road, city, legacy]));
   assert.deepEqual(patched.layers[0], road);
-  assert.deepEqual(patched.layers[1].layout, city.layout);
+  assert.match(JSON.stringify(patched.layers[1].layout["text-field"]), /name:fr/);
   assert.deepEqual(patched.layers[1].filter[1], city.filter);
   assert.ok(patched.layers[1].filter.some((clause) => JSON.stringify(clause) === JSON.stringify(["!=", ["get", "iso_a2"], "EH"])));
   assert.ok(patched.layers[2].filter.some((clause) => JSON.stringify(clause) === JSON.stringify(["!=", "iso_a2", "EH"])));
@@ -56,4 +56,13 @@ test("is idempotent for already-patched styles", () => {
     { id: "places", type: "symbol", source: "openmaptiles", "source-layer": "place" },
   ]));
   assert.deepEqual(applyLinefleetMapDisplay(first), first);
+});
+
+test("reveals useful places earlier with bilingual fallback and normal collision handling", () => {
+  const source = base([{ id: "poi_r1", type: "symbol", "source-layer": "poi", minzoom: 15, layout: { "text-field": ["get", "name"], "text-allow-overlap": false } }]);
+  const patched = applyLinefleetMapDisplay(source);
+  assert.equal(patched.layers[0].minzoom, 14);
+  assert.match(JSON.stringify(patched.layers[0].layout["text-field"]), /name:ar/);
+  assert.equal(patched.layers[0].layout["text-allow-overlap"], false);
+  assert.deepEqual(applyLinefleetMapDisplay(patched), patched);
 });

@@ -60,6 +60,9 @@ jobs:
       - name: Build morocco.pmtiles (planetiler, pinned)
         run: ./scripts/build-morocco-pmtiles.sh
 
+      - name: Verify extract timestamp
+        run: node scripts/read-map-metadata.mjs "$WORK_DIR/morocco.pmtiles" > map-data.json
+
       - name: Vendor Liberty style (official Moroccan view + offline guard)
         run: node ./scripts/vendor-liberty-style.mjs
 
@@ -166,6 +169,7 @@ jobs:
           rm -rf tiles-data
           mkdir -p tiles-data/data
           cp config.json                   tiles-data/config.json
+          cp map-data.json                  tiles-data/map-data.json
           cp "$WORK_DIR/morocco.pmtiles"   tiles-data/data/morocco.pmtiles
           cp -r assets/styles              tiles-data/styles
           cp -r assets/fonts               tiles-data/fonts
@@ -180,12 +184,13 @@ jobs:
         run: |
           set -euo pipefail
           SHA="$(cut -d' ' -f1 "tiles-data-$BUILD_ID.tar.gz.sha256")"
-          OSM_DATE="$(date -u +%Y-%m-%d)"
-          NOTES="Automated monthly rebuild. planetiler $PLANETILER_VERSION · Geofabrik morocco-latest (fetched $OSM_DATE) · official Moroccan view · sha256 $SHA"
+          OSM_DATE="$(jq -r .dataDate map-data.json)"
+          NOTES="Automated monthly rebuild. planetiler $PLANETILER_VERSION · Geofabrik morocco-latest (extract $OSM_DATE) · official Moroccan view · sha256 $SHA"
           NOTES="$NOTES"$'\n\n'"© OpenMapTiles © OpenStreetMap contributors (ODbL)"
           gh release create "tiles-$BUILD_ID" \
             "tiles-data-$BUILD_ID.tar.gz" \
             "tiles-data-$BUILD_ID.tar.gz.sha256" \
+            "map-data.json" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Morocco tiles $BUILD_ID" \
             --notes "$NOTES"

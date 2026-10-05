@@ -116,6 +116,24 @@ function selectsAdminLevel2(filter) {
 }
 
 /** Return a patched copy; repeated application produces the same style. */
+// Ignore empty multilingual fields: coalesce alone treats an empty name as valid.
+function firstName(properties) {
+  const cases = ["case"];
+  for (const property of properties) cases.push(["!=", ["coalesce", ["get", property], ""], ""], ["get", property]);
+  cases.push("");
+  return cases;
+}
+
+/** French-first, with a distinct Arabic line and native-name fallback. */
+const PLACE_LABEL = [
+  "let", "primary", firstName(["name:fr", "name:latin", "name", "name_en"]),
+  "secondary", firstName(["name:ar", "name:nonlatin"]),
+  ["case", ["all", ["!=", ["var", "secondary"], ""], ["!=", ["var", "primary"], ""], ["!=", ["var", "primary"], ["var", "secondary"]]],
+    ["concat", ["var", "primary"], "\n", ["var", "secondary"]],
+    ["case", ["!=", ["var", "primary"], ""], ["var", "primary"], ["var", "secondary"]]],
+];
+const POI_ZOOMS = { poi_r1: 14, poi_r7: 15, poi_r20: 16 };
+
 export function applyLinefleetMapDisplay(style) {
   const patched = structuredClone(style);
   if (typeof patched !== "object" || patched === null || Array.isArray(patched)) return patched;
@@ -133,6 +151,12 @@ export function applyLinefleetMapDisplay(style) {
 
   for (const layer of patched.layers) {
     if (typeof layer !== "object" || layer === null) continue;
+    if (layer.type === "symbol" && layer.layout && /name/.test(JSON.stringify(layer.layout["text-field"]))) {
+      layer.layout["text-field"] = PLACE_LABEL;
+      // Keep normal collision handling: more places, not overlapping text.
+      const zoom = POI_ZOOMS[layer.id];
+      if (zoom !== undefined) layer.minzoom = Math.min(layer.minzoom ?? zoom, zoom);
+    }
     if (layer["source-layer"] === "boundary") {
       layer.filter = andClauses(
         layer.filter,

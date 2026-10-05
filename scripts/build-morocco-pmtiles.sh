@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
 #
-# ⚠️ Synced from LINEFLEET_TRT docker/tiles/ (the dev/local twin) — keep the
-# pair in sync; the PRODUCTION rebuild runs HERE (.github/workflows/build.yml).
-#
 # build-morocco-pmtiles.sh — ONE-TIME, offline Morocco basemap build (F6 / §0).
 #
 # Produces `morocco.pmtiles` (OpenMapTiles vector schema) that the tileserver-gl
@@ -34,10 +31,10 @@
 # ---------------------------------------------------------------------------
 #
 # Usage:
-#   ./scripts/build-morocco-pmtiles.sh
-#   WITH_WESTERN_SAHARA=0 ./scripts/build-morocco-pmtiles.sh   # Morocco proper only
-#   EXTRA_PBF_URLS="https://host/extra.osm.pbf" ./scripts/build-morocco-pmtiles.sh
-#   PLANETILER_VERSION=v0.10.2 XMX=6g ./scripts/build-morocco-pmtiles.sh
+#   ./build-morocco-pmtiles.sh
+#   WITH_WESTERN_SAHARA=0 ./build-morocco-pmtiles.sh          # Morocco proper only
+#   EXTRA_PBF_URLS="https://host/extra.osm.pbf" ./build-morocco-pmtiles.sh
+#   PLANETILER_VERSION=v0.10.2 XMX=6g ./build-morocco-pmtiles.sh
 #
 set -euo pipefail
 
@@ -72,9 +69,21 @@ download() {
   fi
   log "downloading ${url}"
   if command -v curl >/dev/null 2>&1; then
-    curl -fSL --retry 3 -o "${dest}" "${url}"
+    # Resolve Geofabrik's moving alias once. Some download proxies redirect the
+    # alias repeatedly; its dated target is immutable and avoids that loop.
+    if [[ "${url}" == https://download.geofabrik.de/*-latest.osm.pbf ]]; then
+      local location
+      location="$(curl -fsSI --max-time 30 "${url}" | awk 'tolower($1)=="location:" {gsub("\r", "", $2); print $2; exit}')"
+      if [[ "${location}" =~ ^https://download\.geofabrik\.de/[a-z0-9/-]+-[0-9]{6}\.osm\.pbf$ ]]; then
+        url="${location}"
+        log "resolved immutable extract ${url}"
+      fi
+    fi
+    curl -fSL --max-redirs 5 --retry 3 --connect-timeout 30 -o "${dest}.part" "${url}"
+    mv "${dest}.part" "${dest}"
   elif command -v wget >/dev/null 2>&1; then
-    wget -O "${dest}" "${url}"
+    wget -O "${dest}.part" "${url}"
+    mv "${dest}.part" "${dest}"
   else
     die "need curl or wget to download files"
   fi
@@ -100,7 +109,7 @@ WORK_DIR="$(cd "${WORK_DIR}" && pwd)"   # absolutize so Planetiler's ./data land
 # before any download work.
 case "${WORK_DIR}" in
   *[[:space:]]*)
-    die "WORK_DIR resolves to '${WORK_DIR}', which contains spaces — Planetiler parses --output as a URI and crashes on spaces (URISyntaxException: Illegal character in path). Re-run with a space-free scratch dir, e.g.: WORK_DIR=/tmp/linefleet-tiles ./scripts/build-morocco-pmtiles.sh"
+    die "WORK_DIR resolves to '${WORK_DIR}', which contains spaces — Planetiler parses --output as a URI and crashes on spaces (URISyntaxException: Illegal character in path). Re-run with a space-free scratch dir, e.g.: WORK_DIR=/tmp/linefleet-tiles ./build-morocco-pmtiles.sh"
     ;;
 esac
 
@@ -164,7 +173,7 @@ java "${PLANETILER_ARGS[@]}"
 log "DONE. Output size:"
 du -h "${OUTPUT_PATH}"
 echo
-echo "Expected ~150-900 MB (the CI sanity gate enforces this range)."
-echo "Next: vendor the Liberty style, then bundle + publish the Release:"
-echo "  node ./scripts/vendor-liberty-style.mjs      (run from the repo root)"
-echo "  (CI does all of this automatically — see .github/workflows/build.yml)"
+echo "Expected ~300-600 MB (first real build confirms the exact number; record it in README.md)."
+echo "Next: upload to MinIO + populate the sidecar volume, then vendor the Liberty style:"
+echo "  node ./vendor-liberty-style.mjs      (run from docker/tiles/)"
+echo "  See docker/tiles/README.md for the full runbook."
