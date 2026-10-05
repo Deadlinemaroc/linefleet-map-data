@@ -44,7 +44,7 @@ import { withPlaceOverlay } from "./place-overlay.mjs";
 import { applyLinefleetMapDisplay } from "./map-display-policy.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ASSETS = join(HERE, "assets");
+const ASSETS = join(HERE, "..", "assets");
 
 const OFM_BASE = (process.env.OFM_BASE ?? "https://tiles.openfreemap.org").replace(/\/+$/, "");
 const STYLE_URL = process.env.STYLE_URL ?? `${OFM_BASE}/styles/liberty`;
