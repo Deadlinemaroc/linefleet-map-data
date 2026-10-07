@@ -42,6 +42,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withPlaceOverlay } from "./place-overlay.mjs";
 import { applyLinefleetMapDisplay } from "./map-display-policy.mjs";
+import { withWorldBase } from "./world-base.mjs";
+import { readFileSync } from "node:fs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ASSETS = join(HERE, "..", "assets");
@@ -150,7 +152,8 @@ async function main() {
 
   // 3. Apply the same display choice as the web/mobile runtime guard.
   log("applying the Linefleet map display policy (no custom national outline)");
-  const displayed = applyLinefleetMapDisplay(process.env.OVERTURE_PLACES === "1" ? withPlaceOverlay(style) : style);
+  const worldLabels = JSON.parse(readFileSync(join(HERE, "world-country-labels.geojson"), "utf8"));
+  const displayed = applyLinefleetMapDisplay(withWorldBase(process.env.OVERTURE_PLACES === "1" ? withPlaceOverlay(style) : style, worldLabels));
 
   // 4. Collect the font stacks actually referenced by the surviving layers.
   const fontstacks = new Set();

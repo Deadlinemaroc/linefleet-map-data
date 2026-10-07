@@ -170,7 +170,7 @@ export function applyLinefleetMapDisplay(style) {
         layer.filter,
         isExpressionFilter(layer.filter) ? BOUNDARY_EXCLUSIONS_EXPR : BOUNDARY_EXCLUSIONS_LEGACY,
       );
-    } else if (layer["source-layer"] === "place") {
+    } else if (layer["source-layer"] === "place" || layer.source === "world-country-labels") {
       layer.filter = andClauses(
         layer.filter,
         isExpressionFilter(layer.filter) ? placeExclusionsExpr() : placeExclusionsLegacy(),

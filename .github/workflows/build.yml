@@ -56,10 +56,13 @@ jobs:
           node-version: "22"
 
       - name: Test map display policy
-        run: node --test scripts/map-display-policy.test.mjs scripts/place-overlay.test.mjs
+        run: node --test scripts/map-display-policy.test.mjs scripts/place-overlay.test.mjs scripts/world-base.test.mjs
 
       - name: Build morocco.pmtiles (planetiler, pinned)
         run: ./scripts/build-morocco-pmtiles.sh
+
+      - name: Build world.pmtiles (world low-zoom base, planetiler, pinned)
+        run: ./scripts/build-world-pmtiles.sh
 
       - name: Verify extract timestamp
         run: node scripts/read-map-metadata.mjs "$WORK_DIR/morocco.pmtiles" > map-data.json
@@ -154,6 +157,24 @@ jobs:
             ' "$MAP_STYLE" >/dev/null || fail "map display policy regressed in $MAP_STYLE"
           done
 
+          # 8. World base: the low-zoom world tileset exists with a sane size and
+          # both styles read it (source `world`, layer `world_water`); no boundary
+          # layer may be cloned from it (no country line can come from world tiles).
+          WORLD="$WORK_DIR/world.pmtiles"
+          [ -f "$WORLD" ] || fail "missing $WORLD — world build broke"
+          WSIZE=$(stat -c%s "$WORLD")
+          [ "$WSIZE" -ge $((4 * 1024 * 1024)) ] || fail "world.pmtiles < 4 MB — the world build likely broke"
+          [ "$WSIZE" -le $((300 * 1024 * 1024)) ] || fail "world.pmtiles > 300 MB — the world build likely broke"
+          for MAP_STYLE in "$STYLE" "$DARK"; do
+            jq -e '
+              (.sources.world.url == "pmtiles://{world}") and
+              (.sources["world-country-labels"].type == "geojson") and
+              any(.layers[]; .id == "world_water" and .source == "world") and
+              all(.layers[] | select(.source == "world"); ."source-layer" != "boundary") and
+              ((.sources["world-country-labels"].data | tojson | ascii_downcase) | (contains("sahara occidental") or contains("western sahara") or contains("الصحراء الغربية")) | not)
+            ' "$MAP_STYLE" >/dev/null || fail "world base regressed in $MAP_STYLE"
+          done
+
           echo "All sanity gates PASSED."
 
       - name: Pick BUILD_ID (YYYYMMDD, letter-suffixed on tag collision)
@@ -183,6 +204,7 @@ jobs:
           cp config.json                   tiles-data/config.json
           cp map-data.json                  tiles-data/map-data.json
           cp "$WORK_DIR/morocco.pmtiles"   tiles-data/data/morocco.pmtiles
+          cp "$WORK_DIR/world.pmtiles"     tiles-data/data/world.pmtiles
           cp "$WORK_DIR/places.mbtiles"    tiles-data/data/places.mbtiles
           cp "$WORK_DIR/places-metadata.json" tiles-data/places-metadata.json
           cp "$WORK_DIR/places-provenance.json" tiles-data/places-provenance.json

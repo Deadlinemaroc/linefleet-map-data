@@ -8,6 +8,11 @@
 import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { applyLinefleetMapDisplay } from "./map-display-policy.mjs";
+import { withWorldBase } from "./world-base.mjs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 const [inputArg, outputArg, ...extra] = process.argv.slice(2);
 if (!inputArg || !outputArg || extra.length) {
@@ -23,11 +28,12 @@ try {
   if (style?.version !== 8 || !style.sources || Array.isArray(style.sources) || typeof style.sources !== "object" || !Array.isArray(style.layers)) {
     throw new Error("Input must be a MapLibre v8 style with sources and layers");
   }
-  const patched = applyLinefleetMapDisplay(style);
+  const worldLabels = JSON.parse(await readFile(join(HERE, "world-country-labels.geojson"), "utf8"));
+  const patched = applyLinefleetMapDisplay(withWorldBase(style, worldLabels));
   const inputMode = (await stat(input)).mode;
   await writeFile(temporary, `${JSON.stringify(patched, null, 2)}\n`, { mode: inputMode, flag: "wx" });
   await rename(temporary, output);
-  console.log(`Patched ${output}: ${style.layers.length} → ${patched.layers.length} layers; no custom national outline`);
+  console.log(`Patched ${output}: ${style.layers.length} → ${patched.layers.length} layers; world base + no custom national outline`);
 } catch (error) {
   await rm(temporary, { force: true });
   console.error(error instanceof Error ? error.message : String(error));

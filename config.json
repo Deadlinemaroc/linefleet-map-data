@@ -39,6 +39,9 @@
     },
     "places": {
       "mbtiles": "places.mbtiles"
+    },
+    "world": {
+      "pmtiles": "world.pmtiles"
     }
   }
 }
