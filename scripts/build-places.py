@@ -57,7 +57,9 @@ def select_places(features, now):
         dates = []
         for source in sources:
             if source.get("update_time"):
-                dates.append(datetime.fromisoformat(source["update_time"].replace("Z", "+00:00")))
+                stamp = datetime.fromisoformat(source["update_time"].replace("Z", "+00:00"))
+                # Overture 2026-10 ships some update times without an offset: they are UTC.
+                dates.append(stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc))
         if not dates or (now - max(dates)).days > 365:
             continue
         # Remove same-name duplicates within ~75m; retain different branches.
