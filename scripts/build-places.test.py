@@ -26,6 +26,10 @@ class PlacesTests(unittest.TestCase):
         candidates = [fixture(), fixture(confidence=.8), fixture(operating_status="permanently_closed"), fixture(sources=[{"license": "unknown"}]), fixture(sources=[{"license": "CC0", "update_time": "2023-01-01T00:00:00Z"}]), fixture(addresses=[{"country": "ES"}]), fixture(lng=10), fixture(taxonomy={})]
         self.assertEqual(len(places.select_places(candidates, NOW)), 1)
 
+    def test_accepts_update_times_without_offset_as_utc(self):
+        naive = fixture(sources=[{"license": "CDLA-Permissive-2.0", "update_time": "2026-09-14T00:00:00"}])
+        self.assertEqual(len(places.select_places([naive], NOW)), 1)
+
     def test_removes_nearby_alias_duplicate_without_removing_a_distant_branch(self):
         candidates = [fixture("Café Atlas"), fixture("Cafe Atlas", lng=-7.6201), fixture("Café Atlas", lng=-7.63)]
         self.assertEqual(len(places.select_places(candidates, NOW)), 2)
