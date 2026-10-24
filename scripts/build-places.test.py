@@ -23,7 +23,7 @@ def fixture(name="A landmark", lng=-7.62, lat=33.59, **changes):
 
 class PlacesTests(unittest.TestCase):
     def test_rejects_stale_uncertain_closed_unlicensed_and_outside_places(self):
-        candidates = [fixture(), fixture(confidence=.8), fixture(operating_status="permanently_closed"), fixture(sources=[{"license": "unknown"}]), fixture(sources=[{"license": "CC0", "update_time": "2023-01-01T00:00:00Z"}]), fixture(addresses=[{"country": "ES"}]), fixture(lng=10), fixture(taxonomy={})]
+        candidates = [fixture(), fixture(confidence=.6), fixture(operating_status="permanently_closed"), fixture(sources=[{"license": "unknown"}]), fixture(sources=[{"license": "CC0", "update_time": "2023-01-01T00:00:00Z"}]), fixture(addresses=[{"country": "ES"}]), fixture(lng=10), fixture(taxonomy={})]
         self.assertEqual(len(places.select_places(candidates, NOW)), 1)
 
     def test_accepts_update_times_without_offset_as_utc(self):

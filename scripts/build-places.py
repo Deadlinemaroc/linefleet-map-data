@@ -22,6 +22,9 @@ import mapbox_vector_tile
 
 ALLOWED_LICENSES = {"CDLA-Permissive-2.0", "CC0-1.0", "CC0"}
 BOUNDS = (-17.2, 20.75, -0.95, 36.1)
+# Measured on Overture 2026-10-21 in one Casablanca neighbourhood: 0.95 kept
+# 41 of 1 450 records (~3 %), 0.7 keeps 324 (~22 %). Higher confidence still wins label collisions (place-overlay).
+MIN_CONFIDENCE = 0.7
 
 
 def normalized_name(name):
@@ -43,7 +46,7 @@ def select_places(features, now):
         lng, lat = geometry["coordinates"][:2]
         if not (BOUNDS[0] <= lng <= BOUNDS[2] and BOUNDS[1] <= lat <= BOUNDS[3]):
             continue
-        if (p.get("confidence") or 0) < .95 or p.get("operating_status") in {"permanently_closed", "closed"}:
+        if (p.get("confidence") or 0) < MIN_CONFIDENCE or p.get("operating_status") in {"permanently_closed", "closed"}:
             continue
         if not any(a.get("country") in {"MA", "EH"} for a in p.get("addresses") or []):
             continue
@@ -126,7 +129,7 @@ def main():
     if not 500 <= len(places) <= 50_000:
         raise ValueError(f"Unexpected regional place count: {len(places)}")
     tiles = build_tiles(places, work / "places.mbtiles", release)
-    metadata = {"release": release, "places": len(places), "tiles": tiles, "minimumConfidence": .95, "licenses": sorted({s["license"] for p in places for s in p["sources"]})}
+    metadata = {"release": release, "places": len(places), "tiles": tiles, "minimumConfidence": MIN_CONFIDENCE, "licenses": sorted({s["license"] for p in places for s in p["sources"]})}
     (work / "places-metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     # Preserve source provenance outside compact runtime tiles.
     (work / "places-provenance.json").write_text(json.dumps([{ "id": p["id"], "name": p["properties"]["name"], "sources": p["sources"] } for p in places], ensure_ascii=False))
